@@ -1,0 +1,65 @@
+log_level: INFO
+data_dir: ./data
+
+# ============================================================
+# AI Backend Options (per bot):
+#   backend: "anthropic"    - Anthropic API direct call (needs API key)
+#   backend: "claude_code"  - Claude Code CLI subprocess (needs claude installed)
+# ============================================================
+
+bots:
+  # Example: Telegram bot using Anthropic API
+  - id: panda-telegram
+    platform: telegram
+    token: ${TELEGRAM_BOT_TOKEN}
+    ai:
+      backend: anthropic
+      model: claude-sonnet-4-20250514
+      max_tokens: 4096
+      system_prompt: |
+        You are Panda, a helpful assistant. You can browse the web,
+        manage files, execute programs, and schedule tasks.
+      temperature: 0.7
+      tools:
+        - browser
+        - filesystem
+        - executor
+        - scheduler
+
+  # Example: Discord bot using Claude Code CLI
+  - id: panda-discord
+    platform: discord
+    token: ${DISCORD_BOT_TOKEN}
+    guild_ids: []
+    ai:
+      backend: claude_code
+      model: claude-sonnet-4-20250514
+      max_tokens: 4096
+      system_prompt: |
+        You are Panda, a helpful Discord assistant.
+      temperature: 0.7
+
+# Anthropic API settings (required if any bot uses backend: anthropic)
+anthropic:
+  api_key: ${ANTHROPIC_API_KEY}
+  max_retries: 3
+  timeout: 120
+
+# Claude Code CLI settings (used if any bot uses backend: claude_code)
+claude_code:
+  cli_path: claude              # Path to claude CLI executable
+  timeout: 300                  # Max seconds per request
+  allowed_tools: []             # Claude Code tool permissions (empty = default)
+
+services:
+  browser:
+    headless: true
+    browser_type: chromium
+    timeout_ms: 30000
+  scheduler:
+    timezone: UTC
+    max_concurrent_jobs: 5
+
+storage:
+  db_path: ${data_dir}/panda_bot.db
+  fts_enabled: true
