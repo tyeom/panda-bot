@@ -103,8 +103,11 @@ cp config.example.yaml config.yaml
 # 봇 시작
 python -m panda_bot
 
-# 설정 검증만
+# 설정 검증
 python -m panda_bot config-check
+
+# AI 모델 정보 확인
+python -m panda_bot model-info
 ```
 
 ## config.yaml 설정
@@ -147,6 +150,21 @@ ai:
 | `executor` | 쉘 커맨드 및 스크립트 파일 실행 |
 | `scheduler` | cron/일회성 AI 작업 예약, 작업 목록 조회, 작업 삭제 |
 
+### model - Claude Code CLI 모델 선택
+
+`claude_code` 백엔드에서 사용할 모델을 지정합니다. 기본값은 `sonnet`입니다:
+
+```yaml
+claude_code:
+  model: sonnet    # "sonnet" | "opus" | "haiku"
+```
+
+| 모델 | 특징 |
+|------|------|
+| `sonnet` | 균형 잡힌 성능과 속도 (기본값, 권장) |
+| `opus` | 최고 성능, 느리고 한도 소모가 큼 |
+| `haiku` | 빠르고 가벼움, 단순 작업에 적합 |
+
 ### allowed_tools - Claude Code CLI 자체 도구 권한
 
 `claude_code` 백엔드 사용 시, Claude Code CLI가 자체적으로 사용할 수 있는 도구의 권한을 설정합니다. panda-bot의 `tools`와는 별개입니다:
@@ -154,6 +172,7 @@ ai:
 ```yaml
 claude_code:
   cli_path: claude
+  model: sonnet
   timeout: 300
   allowed_tools:
     - "WebFetch"      # 웹 페이지 가져오기
@@ -195,6 +214,7 @@ anthropic:
 
 claude_code:
   cli_path: claude
+  model: sonnet
   timeout: 300
   allowed_tools:
     - "WebFetch"
@@ -263,11 +283,21 @@ Claude가 scheduler 도구 호출:
   5. bot_registry.get(bot_id) → adapter.send_message() → 채팅방에 전송
 ```
 
+### CLI 명령어
+
+| 명령어 | 설명 |
+|--------|------|
+| `python -m panda_bot` | 봇 시작 (기본) |
+| `python -m panda_bot start` | 봇 시작 |
+| `python -m panda_bot config-check` | 설정 파일 검증 |
+| `python -m panda_bot model-info` | 봇별 AI 모델 정보 확인 |
+
 ### 채팅 명령어
 
 | 명령어 | 설명 |
 |--------|------|
 | `/reset` | 현재 세션 초기화 (대화 기록 리셋) |
+| `/model` | 현재 봇의 AI 백엔드, 모델, 도구 정보 확인 |
 | `/search <query>` | 대화 기록 전문 검색 |
 
 ## 기술 스택

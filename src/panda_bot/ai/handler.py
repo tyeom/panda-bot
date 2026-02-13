@@ -95,6 +95,21 @@ class MessageHandler:
             )
             return
 
+        if text.lower() == "/model":
+            backend = self._bot_config.ai.backend
+            model = self._ai_client.model_name
+            tools = ", ".join(self._bot_config.ai.tools) or "(none)"
+            info = (
+                f"Bot: {bot_id}\n"
+                f"Backend: {backend}\n"
+                f"Model: {model}\n"
+                f"Tools: {tools}"
+            )
+            await self._adapter.send_message(
+                OutgoingMessage(chat_id=chat_id, text=info)
+            )
+            return
+
         if text.lower().startswith("/search "):
             query = text[8:].strip()
             results = await self._session_manager.repo.search(query, bot_id=bot_id, limit=5)

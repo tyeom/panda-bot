@@ -48,6 +48,7 @@ anthropic:
 # Claude Code CLI settings (used if any bot uses backend: claude_code)
 claude_code:
   cli_path: claude              # Path to claude CLI executable
+  model: sonnet                 # "sonnet" | "opus" | "haiku" (default: sonnet)
   timeout: 300                  # Max seconds per request
   allowed_tools: []             # Claude Code tool permissions (empty = default)
 

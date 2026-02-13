@@ -38,6 +38,7 @@ class AnthropicConfig(BaseModel):
 
 class ClaudeCodeConfig(BaseModel):
     cli_path: str = "claude"
+    model: str = "sonnet"  # e.g. "sonnet", "opus", "haiku"
     timeout: int = 300
     allowed_tools: list[str] = Field(default_factory=list)
 

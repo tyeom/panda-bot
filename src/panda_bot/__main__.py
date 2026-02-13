@@ -38,6 +38,15 @@ def main() -> None:
         "-e", "--env", default=".env", help="Path to .env file"
     )
 
+    # model-info command
+    model_parser = subparsers.add_parser("model-info", help="Show AI model info per bot")
+    model_parser.add_argument(
+        "-c", "--config", default="config.yaml", help="Path to config file"
+    )
+    model_parser.add_argument(
+        "-e", "--env", default=".env", help="Path to .env file"
+    )
+
     args = parser.parse_args()
 
     if args.command is None:
@@ -48,6 +57,8 @@ def main() -> None:
 
     if args.command == "config-check":
         _check_config(args.config, args.env)
+    elif args.command == "model-info":
+        _model_info(args.config, args.env)
     elif args.command == "start":
         _run(args.config, args.env)
 
@@ -60,12 +71,41 @@ def _check_config(config_path: str, env_path: str) -> None:
         print(f"  Data directory: {config.data_dir}")
         print(f"  Bots configured: {len(config.bots)}")
         for bot in config.bots:
-            print(f"    - {bot.id} ({bot.platform})")
+            model = config.claude_code.model if bot.ai.backend == "claude_code" else bot.ai.model
+            print(f"    - {bot.id} ({bot.platform}) [{bot.ai.backend}: {model}]")
         print(f"  Storage: {config.storage.db_path}")
         print(f"  Browser: {config.services.browser.browser_type} (headless={config.services.browser.headless})")
     except Exception as e:
         print(f"Configuration error: {e}", file=sys.stderr)
         sys.exit(1)
+
+
+def _model_info(config_path: str, env_path: str) -> None:
+    """Show AI model information for each bot."""
+    try:
+        config = load_config(config_path, env_path)
+    except Exception as e:
+        print(f"Configuration error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print("AI Model Configuration")
+    print("=" * 50)
+    for bot in config.bots:
+        print(f"\n  Bot: {bot.id} ({bot.platform})")
+        print(f"    Backend : {bot.ai.backend}")
+        if bot.ai.backend == "anthropic":
+            print(f"    Model   : {bot.ai.model}")
+            print(f"    Tokens  : {bot.ai.max_tokens}")
+        elif bot.ai.backend == "claude_code":
+            print(f"    Model   : {config.claude_code.model}")
+            print(f"    CLI     : {config.claude_code.cli_path}")
+            print(f"    Timeout : {config.claude_code.timeout}s")
+        print(f"    Temp    : {bot.ai.temperature}")
+        tools = bot.ai.tools
+        print(f"    Tools   : {', '.join(tools) if tools else '(none)'}")
+        if bot.ai.backend == "claude_code" and config.claude_code.allowed_tools:
+            print(f"    CLI Tools: {', '.join(config.claude_code.allowed_tools)}")
+    print()
 
 
 def _run(config_path: str, env_path: str) -> None:

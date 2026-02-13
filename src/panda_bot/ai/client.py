@@ -30,6 +30,12 @@ class AIResponse:
 class AIClient(ABC):
     """Abstract base class for AI backends."""
 
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """Return the model identifier currently in use."""
+        ...
+
     @abstractmethod
     async def chat(
         self,
@@ -70,6 +76,11 @@ class AnthropicClient(AIClient):
             max_retries=config.max_retries,
             timeout=config.timeout,
         )
+        self._model: str = ""  # set per-request via chat() model param
+
+    @property
+    def model_name(self) -> str:
+        return self._model or "(per-request)"
 
     @property
     def supports_tool_loop(self) -> bool:
@@ -137,8 +148,13 @@ class ClaudeCodeClient(AIClient):
 
     def __init__(self, config: ClaudeCodeConfig):
         self._cli_path = self._resolve_cli_path(config.cli_path)
+        self._model: str = config.model
         self._timeout = config.timeout
         self._allowed_tools = config.allowed_tools
+
+    @property
+    def model_name(self) -> str:
+        return self._model or "default"
 
     @staticmethod
     def _resolve_cli_path(cli_path: str) -> str:
@@ -189,6 +205,10 @@ class ClaudeCodeClient(AIClient):
 
         # Build command - pipe prompt via stdin to avoid Windows encoding issues
         cmd = [self._cli_path, "-p", "--output-format", "json"]
+
+        # Add model selection
+        if self._model:
+            cmd.extend(["--model", self._model])
 
         # Add allowed tools
         if self._allowed_tools:
