@@ -1,4 +1,4 @@
-# Panda Bot <img width="50" height="50" alt="image" src="https://github.com/user-attachments/assets/7bf2af5f-befc-4d35-bc94-f32cbdd457ac" />
+# Panda Claude Agent <img width="50" height="50" alt="image" src="https://github.com/user-attachments/assets/7bf2af5f-befc-4d35-bc94-f32cbdd457ac" />
 
 
 Claude AI 기반 멀티 메신저 봇 플랫폼. Telegram과 Discord를 지원하며, 웹 브라우징, 파일 관리, 프로그램 실행, 작업 스케줄링 기능을 제공합니다.
