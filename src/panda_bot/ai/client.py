@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import shutil
+import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
@@ -200,7 +201,8 @@ class ClaudeCodeClient(AIClient):
         tools: list[dict[str, Any]] | None = None,
     ) -> AIResponse:
         """Send a conversation to Claude Code CLI and return the final response."""
-        # Build the prompt from conversation history
+        # Build prompt: system instructions embedded in stdin + messages
+        # System is also sent via --system-prompt flag as backup
         prompt = self._build_prompt(system, messages)
 
         # Build command - pipe prompt via stdin to avoid Windows encoding issues
@@ -215,7 +217,18 @@ class ClaudeCodeClient(AIClient):
             for tool_name in self._allowed_tools:
                 cmd.extend(["--allowedTools", tool_name])
 
-        logger.info("claude_code_request", cli_path=self._cli_path, prompt_length=len(prompt))
+        # Pass system prompt via --system-prompt flag
+        if system:
+            cmd.extend(["--system-prompt", system])
+
+        logger.info(
+            "claude_code_request",
+            cli_path=self._cli_path,
+            model=self._model,
+            prompt_length=len(prompt),
+            system_length=len(system) if system else 0,
+            cmd_length=sum(len(c) for c in cmd),
+        )
 
         try:
             # Remove ANTHROPIC_API_KEY from subprocess env so CLI uses subscription auth
@@ -238,7 +251,6 @@ class ClaudeCodeClient(AIClient):
             stderr_text = stderr.decode("utf-8", errors="replace").strip()
 
             if process.returncode != 0:
-                # Show both stdout and stderr for debugging
                 error_detail = stderr_text or stdout_text or "(no output)"
                 logger.error(
                     "claude_code_error",
@@ -261,11 +273,15 @@ class ClaudeCodeClient(AIClient):
             )
 
     def _build_prompt(self, system: str, messages: list[dict[str, Any]]) -> str:
-        """Convert system prompt and message history into a single prompt string."""
+        """Convert system prompt and message history into a single prompt string.
+
+        System prompt is embedded at the start of stdin AND sent via
+        --system-prompt flag (belt and suspenders for reliability).
+        """
         parts: list[str] = []
 
         if system:
-            parts.append(f"[System Instructions]\n{system}\n")
+            parts.append(f"<INSTRUCTIONS>\n{system}\n</INSTRUCTIONS>")
 
         for msg in messages:
             role = msg.get("role", "")
@@ -273,17 +289,16 @@ class ClaudeCodeClient(AIClient):
 
             if isinstance(content, str):
                 if role == "user":
-                    parts.append(f"[User]\n{content}")
+                    parts.append(f"User: {content}")
                 elif role == "assistant":
-                    parts.append(f"[Assistant]\n{content}")
+                    parts.append(f"Assistant: {content}")
             elif isinstance(content, list):
-                # Handle structured content blocks (tool_use results etc.)
                 for block in content:
                     if isinstance(block, dict):
                         if block.get("type") == "text":
-                            parts.append(f"[{role.title()}]\n{block['text']}")
+                            parts.append(f"{role.title()}: {block['text']}")
                         elif block.get("type") == "tool_result":
-                            parts.append(f"[Tool Result]\n{block.get('content', '')}")
+                            parts.append(f"Tool Result: {block.get('content', '')}")
 
         return "\n\n".join(parts)
 
