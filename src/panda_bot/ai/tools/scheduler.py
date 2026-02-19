@@ -17,6 +17,7 @@ class SchedulerTool(Tool):
     """Tool for scheduling recurring or one-shot tasks with AI execution."""
 
     def __init__(self, scheduler_service: SchedulerService):
+        super().__init__()
         self._scheduler = scheduler_service
         # Current conversation context (set before each tool execution)
         self._current_bot_id: str = ""

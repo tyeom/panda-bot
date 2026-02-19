@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,7 +13,7 @@ from discord.ext import commands
 from panda_bot.core.types import Platform
 from panda_bot.log import get_logger
 from panda_bot.messenger.base import MessengerAdapter
-from panda_bot.messenger.models import IncomingMessage, OutgoingMessage
+from panda_bot.messenger.models import Attachment, IncomingMessage, OutgoingMessage
 
 logger = get_logger(__name__)
 
@@ -83,8 +84,20 @@ class DiscordAdapter(MessengerAdapter):
         if not isinstance(channel, (discord.TextChannel, discord.DMChannel, discord.Thread)):
             return
 
+        # Build file attachments
+        files: list[discord.File] = []
+        if message.attachments:
+            for att in message.attachments:
+                files.append(discord.File(io.BytesIO(att.data), filename=att.filename))
+
         # Discord message limit is 2000 chars
         text = message.text
+        if files:
+            # Send first chunk with files
+            chunk = text[:2000] if text else None
+            await channel.send(content=chunk, files=files)
+            text = text[2000:] if text else ""
+
         while text:
             chunk = text[:2000]
             text = text[2000:]
@@ -96,10 +109,26 @@ class DiscordAdapter(MessengerAdapter):
             await channel.typing()  # type: ignore[union-attr]
 
     async def _on_discord_message(self, message: discord.Message) -> None:
-        """Handle incoming Discord message."""
-        if not message.content:
-            return
+        """Handle incoming Discord message (text and/or images)."""
         if not self._message_callback:
+            return
+
+        text = message.content or ""
+        attachments: list[Attachment] = []
+
+        # Download image attachments
+        for att in message.attachments:
+            if att.content_type and att.content_type.startswith("image/"):
+                try:
+                    data = await att.read()
+                    attachments.append(
+                        Attachment(data=data, media_type=att.content_type, filename=att.filename)
+                    )
+                except Exception as e:
+                    logger.warning("discord_attachment_download_error", error=str(e))
+
+        # Skip if no text and no attachments
+        if not text and not attachments:
             return
 
         incoming = IncomingMessage(
@@ -108,11 +137,12 @@ class DiscordAdapter(MessengerAdapter):
             chat_id=str(message.channel.id),
             user_id=str(message.author.id),
             user_display_name=message.author.display_name,
-            text=message.content,
+            text=text,
             timestamp=message.created_at or datetime.now(timezone.utc),
             reply_to_message_id=(
                 str(message.reference.message_id) if message.reference else None
             ),
+            attachments=attachments,
         )
 
         try:

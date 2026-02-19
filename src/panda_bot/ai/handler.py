@@ -15,7 +15,7 @@ from panda_bot.config import BotConfig
 from panda_bot.core.session import SessionManager
 from panda_bot.log import get_logger
 from panda_bot.messenger.base import MessengerAdapter
-from panda_bot.messenger.models import IncomingMessage, OutgoingMessage
+from panda_bot.messenger.models import Attachment, IncomingMessage, OutgoingMessage
 from panda_bot.storage.models import ConversationRecord
 
 logger = get_logger(__name__)
@@ -77,13 +77,47 @@ def _build_tool_system_prompt(tools: list[Tool]) -> str:
 
     lines.extend([
         "",
-        "=== EXAMPLE ===",
+        "=== BROWSER SESSION INFO ===",
+        "The browser tool maintains a PERSISTENT SESSION across calls.",
+        "Cookies, localStorage, and sessionStorage are preserved between actions.",
+        "This means you can log in to a website and then access authenticated pages",
+        "in subsequent calls without logging in again.",
+        "If 'url' is omitted, the action operates on the current page.",
+        "Use 'clear_session' to reset all session data when needed.",
+        "",
+        "=== EXAMPLES ===",
+        "",
+        "Example 1: Simple page read",
         "User: 'Show me the content of https://example.com'",
         "You should respond with:",
         '<tool_call>',
         '{"tool": "browser", "input": {"action": "open", "url": "https://example.com"}}',
         '</tool_call>',
         "",
+        "Example 2: Login workflow (session is maintained across calls)",
+        "User: 'Log in to example.com and get my dashboard info'",
+        "Step 1 - open the login page:",
+        '<tool_call>',
+        '{"tool": "browser", "input": {"action": "open", "url": "https://example.com/login"}}',
+        '</tool_call>',
+        "Step 2 - fill username:",
+        '<tool_call>',
+        '{"tool": "browser", "input": {"action": "fill", "selector": "#username", "value": "user"}}',
+        '</tool_call>',
+        "Step 3 - fill password:",
+        '<tool_call>',
+        '{"tool": "browser", "input": {"action": "fill", "selector": "#password", "value": "pass"}}',
+        '</tool_call>',
+        "Step 4 - click login button:",
+        '<tool_call>',
+        '{"tool": "browser", "input": {"action": "click", "selector": "#login-btn"}}',
+        '</tool_call>',
+        "Step 5 - access authenticated page (session cookies are preserved):",
+        '<tool_call>',
+        '{"tool": "browser", "input": {"action": "open", "url": "https://example.com/dashboard"}}',
+        '</tool_call>',
+        "",
+        "Example 3: Scheduling",
         "User: 'Check my email every 5 minutes'",
         "You should respond with:",
         '<tool_call>',
@@ -141,9 +175,14 @@ class MessageHandler:
         bot_id = message.bot_id
         chat_id = message.chat_id
         text = message.text.strip()
+        attachments = message.attachments
 
-        if not text:
+        if not text and not attachments:
             return
+
+        # When image is sent without text, use placeholder
+        if not text and attachments:
+            text = "[Image]"
 
         # Handle special commands
         if text.lower() == "/reset":
@@ -197,20 +236,21 @@ class MessageHandler:
             platform=message.platform.value,
         )
 
-        # Save user message
+        # Save user message (prefix with [Image] if attachment present)
+        save_text = f"[Image] {text}" if attachments and not text.startswith("[Image]") else text
         await repo.save_turn(
             ConversationRecord(
                 bot_id=bot_id,
                 session_id=session_id,
                 chat_id=chat_id,
                 role="user",
-                content=text,
+                content=save_text,
             )
         )
 
         # Load conversation history
         history = await repo.get_session_history(bot_id, session_id)
-        messages = build_messages(history)
+        messages = build_messages(history, current_attachments=attachments or None)
 
         ai_config = self._bot_config.ai
 
@@ -239,6 +279,28 @@ class MessageHandler:
                 )
             else:
                 # Claude Code CLI: use text-based tool loop with panda-bot tools
+                # CLI doesn't support vision — save images as temp files and reference paths
+                if attachments:
+                    import tempfile
+                    import os
+
+                    img_refs: list[str] = []
+                    for att in attachments:
+                        ext = att.media_type.split("/")[-1] if "/" in att.media_type else "bin"
+                        tmp = tempfile.NamedTemporaryFile(
+                            suffix=f".{ext}", prefix="panda_img_", delete=False
+                        )
+                        tmp.write(att.data)
+                        tmp.close()
+                        img_refs.append(tmp.name)
+
+                    # Append file paths to last user message so CLI can reference them
+                    paths_note = "\n[Attached images saved to: " + ", ".join(img_refs) + "]"
+                    for m in reversed(messages):
+                        if m.get("role") == "user" and isinstance(m.get("content"), str):
+                            m["content"] += paths_note
+                            break
+
                 tools = self._tool_registry.get_tools_by_names(ai_config.tools)
                 response_text = await self._run_claude_code_tool_loop(
                     messages=messages,
@@ -249,14 +311,33 @@ class MessageHandler:
                     chat_id=chat_id,
                 )
 
+                # Clean up temp files
+                if attachments:
+                    for path in img_refs:
+                        try:
+                            os.unlink(path)
+                        except OSError:
+                            pass
+
         except Exception as e:
             logger.error("ai_error", bot_id=bot_id, error=str(e))
             response_text = f"An error occurred: {e}"
+
+        # Collect pending images from tools
+        pending_images: list[Attachment] = []
+        for tool in self._tool_registry.get_tools_by_names(ai_config.tools):
+            pending_images.extend(tool.take_pending_images())
 
         # Send response (split long messages)
         for chunk in _split_message(response_text, max_length=4000):
             await self._adapter.send_message(
                 OutgoingMessage(chat_id=chat_id, text=chunk)
+            )
+
+        # Send pending images (e.g. screenshots) to user
+        if pending_images:
+            await self._adapter.send_message(
+                OutgoingMessage(chat_id=chat_id, text="", attachments=pending_images)
             )
 
     async def _run_claude_code_tool_loop(
@@ -348,13 +429,14 @@ class MessageHandler:
             # Add assistant response to messages
             messages.append({"role": "assistant", "content": response_text})
 
-            # Save assistant tool request
+            # Save assistant tool request as regular assistant message
+            # (tool_use/tool_result roles are for Anthropic API backend only)
             await repo.save_turn(
                 ConversationRecord(
                     bot_id=bot_id,
                     session_id=session_id,
                     chat_id=chat_id,
-                    role="tool_use",
+                    role="assistant",
                     content=response_text,
                 )
             )
@@ -381,13 +463,14 @@ class MessageHandler:
             # Build tool results message
             results_text = "\n\n".join(tool_results)
 
-            # Save tool results
+            # Save tool results as regular user message
+            # (tool_use/tool_result roles are for Anthropic API backend only)
             await repo.save_turn(
                 ConversationRecord(
                     bot_id=bot_id,
                     session_id=session_id,
                     chat_id=chat_id,
-                    role="tool_result",
+                    role="user",
                     content=results_text,
                 )
             )

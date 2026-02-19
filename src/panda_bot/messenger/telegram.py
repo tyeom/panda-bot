@@ -12,7 +12,7 @@ from telegram.ext import Application, MessageHandler as TGMessageHandler, filter
 
 from panda_bot.log import get_logger
 from panda_bot.messenger.base import MessengerAdapter
-from panda_bot.messenger.models import IncomingMessage, OutgoingMessage
+from panda_bot.messenger.models import Attachment, IncomingMessage, OutgoingMessage
 from panda_bot.core.types import Platform
 
 logger = get_logger(__name__)
@@ -45,6 +45,10 @@ class TelegramAdapter(MessengerAdapter):
         self._app.add_handler(
             TGMessageHandler(filters.COMMAND, self._on_telegram_message)
         )
+        # Handle photo messages
+        self._app.add_handler(
+            TGMessageHandler(filters.PHOTO, self._on_telegram_message)
+        )
 
         await self._app.initialize()
         await self._app.start()
@@ -62,6 +66,21 @@ class TelegramAdapter(MessengerAdapter):
         if not self._app or not self._app.bot:
             return
 
+        chat_id = int(message.chat_id)
+        reply_id = int(message.reply_to_message_id) if message.reply_to_message_id else None
+
+        # Send image attachments
+        if message.attachments:
+            for att in message.attachments:
+                if att.media_type.startswith("image/"):
+                    await self._app.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=att.data,
+                        caption=message.text or None,
+                        reply_to_message_id=reply_id,
+                    )
+            return
+
         parse_mode = None
         if message.parse_mode == "markdown":
             parse_mode = "MarkdownV2"
@@ -69,12 +88,10 @@ class TelegramAdapter(MessengerAdapter):
             parse_mode = "HTML"
 
         await self._app.bot.send_message(
-            chat_id=int(message.chat_id),
+            chat_id=chat_id,
             text=message.text,
             parse_mode=parse_mode,
-            reply_to_message_id=(
-                int(message.reply_to_message_id) if message.reply_to_message_id else None
-            ),
+            reply_to_message_id=reply_id,
         )
 
     async def send_typing_indicator(self, chat_id: str) -> None:
@@ -84,13 +101,32 @@ class TelegramAdapter(MessengerAdapter):
             )
 
     async def _on_telegram_message(self, update: Update, context: Any) -> None:
-        """Handle incoming Telegram message."""
-        if not update.message or not update.message.text:
+        """Handle incoming Telegram message (text and/or photo)."""
+        if not update.message:
             return
         if not self._message_callback:
             return
 
         msg = update.message
+        text = msg.text or msg.caption or ""
+        attachments: list[Attachment] = []
+
+        # Download photo if present (highest resolution = last element)
+        if msg.photo:
+            try:
+                photo = msg.photo[-1]
+                tg_file = await photo.get_file()
+                photo_bytes = await tg_file.download_as_bytearray()
+                attachments.append(
+                    Attachment(data=bytes(photo_bytes), media_type="image/jpeg", filename="photo.jpg")
+                )
+            except Exception as e:
+                logger.warning("telegram_photo_download_error", error=str(e))
+
+        # Skip if no text and no attachments
+        if not text and not attachments:
+            return
+
         incoming = IncomingMessage(
             platform=Platform.TELEGRAM,
             bot_id=self.bot_id,
@@ -99,11 +135,12 @@ class TelegramAdapter(MessengerAdapter):
             user_display_name=(
                 msg.from_user.full_name if msg.from_user else "Unknown"
             ),
-            text=msg.text,
+            text=text,
             timestamp=msg.date or datetime.now(timezone.utc),
             reply_to_message_id=(
                 str(msg.reply_to_message.message_id) if msg.reply_to_message else None
             ),
+            attachments=attachments,
         )
 
         try:

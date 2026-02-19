@@ -10,6 +10,15 @@ from panda_bot.core.types import Platform
 
 
 @dataclass(frozen=True, slots=True)
+class Attachment:
+    """Binary attachment (image, file, etc.)."""
+
+    data: bytes
+    media_type: str  # e.g. "image/jpeg", "image/png"
+    filename: str = "attachment"
+
+
+@dataclass(frozen=True, slots=True)
 class IncomingMessage:
     platform: Platform
     bot_id: str
@@ -19,7 +28,7 @@ class IncomingMessage:
     text: str
     timestamp: datetime
     reply_to_message_id: Optional[str] = None
-    attachments: list[str] = field(default_factory=list)
+    attachments: list[Attachment] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,4 +37,4 @@ class OutgoingMessage:
     text: str
     parse_mode: Optional[str] = None  # "markdown", "html", None
     reply_to_message_id: Optional[str] = None
-    attachments: list[str] = field(default_factory=list)
+    attachments: list[Attachment] = field(default_factory=list)
