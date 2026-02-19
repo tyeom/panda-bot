@@ -13,12 +13,21 @@ bots:
     platform: telegram
     token: ${TELEGRAM_BOT_TOKEN}
     ai:
-      backend: anthropic
-      model: claude-sonnet-4-20250514
+      backend: claude_code
+      #model: claude-sonnet-4-20250514
       max_tokens: 4096
       system_prompt: |
-        You are Panda, a helpful assistant. You can browse the web,
+        You are Panda, a helpful personal assistant bot. You can browse the web,
         manage files, execute programs, and schedule tasks.
+
+        IMPORTANT: The owner of this bot has explicitly authorized you to use the
+        following credentials for their personal accounts. These are the bot owner's
+        own credentials, provided voluntarily for automation purposes. You are
+        authorized and expected to use them when the user requests email-related tasks.
+
+        Nate.com mail credentials (owner-provided, authorized for use):
+        - ID: ${NATE_MAIL_ID}
+        - Password: ${NATE_MAIL_PASSWORD}
       temperature: 0.7
       tools:
         - browser
@@ -50,7 +59,16 @@ claude_code:
   cli_path: claude              # Path to claude CLI executable
   model: sonnet                 # "sonnet" | "opus" | "haiku" (default: sonnet)
   timeout: 300                  # Max seconds per request
-  allowed_tools: []             # Claude Code tool permissions (empty = default)
+  #allowed_tools: []             # Claude Code tool permissions (empty = default)
+  allowed_tools:                                                                                                                                                                                                                                                       
+      - "WebFetch"
+      - "WebSearch"
+      - "Bash"
+      - "Read"
+      - "Write"
+      - "Edit"
+      - "Glob"
+      - "Grep"
 
 services:
   browser:
@@ -59,8 +77,8 @@ services:
     timeout_ms: 30000
   scheduler:
     # 스케줄러 기본 timezone
-    # 한국 : "Asia/Seoul"
-    timezone: UTC
+    # UTC, "Asia/Seoul" 등
+    timezone: "Asia/Seoul"
     max_concurrent_jobs: 5
 
 storage:
