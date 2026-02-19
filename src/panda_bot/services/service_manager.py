@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from panda_bot.config import ServicesConfig
 from panda_bot.log import get_logger
 from panda_bot.services.browser import BrowserService
 from panda_bot.services.scheduler import SchedulerService
+
+if TYPE_CHECKING:
+    from panda_bot.storage.database import Database
 
 logger = get_logger(__name__)
 
@@ -13,9 +18,9 @@ logger = get_logger(__name__)
 class ServiceManager:
     """Manages startup and shutdown of all services."""
 
-    def __init__(self, config: ServicesConfig):
+    def __init__(self, config: ServicesConfig, db: Database | None = None):
         self._browser = BrowserService(config.browser)
-        self._scheduler = SchedulerService(config.scheduler)
+        self._scheduler = SchedulerService(config.scheduler, db=db)
 
     def get_browser(self) -> BrowserService:
         return self._browser

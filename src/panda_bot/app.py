@@ -25,7 +25,7 @@ class PandaBotApp:
         self.db = Database(config.storage.db_path)
         self.conversation_repo = ConversationRepository(self.db)
         self.session_manager = SessionManager(self.conversation_repo)
-        self.service_manager = ServiceManager(config.services)
+        self.service_manager = ServiceManager(config.services, db=self.db)
         self.tool_registry = ToolRegistry(self.service_manager)
         self.bot_registry = BotRegistry()
 
@@ -58,6 +58,9 @@ class PandaBotApp:
             session_manager=self.session_manager,
             conversation_repo=self.conversation_repo,
         )
+
+        # 4.1 Restore persisted scheduled jobs from DB
+        await self.service_manager.get_scheduler().load_persisted_jobs()
 
         # 5. Bot adapters
         for bot_cfg in self.config.bots:

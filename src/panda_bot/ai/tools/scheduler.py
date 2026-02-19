@@ -97,7 +97,7 @@ class SchedulerTool(Tool):
                     if not bot_id or not chat_id:
                         return "Error: no conversation context available"
 
-                    job_id = self._scheduler.add_ai_cron_job(
+                    job_id = await self._scheduler.add_ai_cron_job(
                         cron_expr=cron_expr,
                         bot_id=bot_id,
                         chat_id=chat_id,
@@ -124,7 +124,7 @@ class SchedulerTool(Tool):
                         return "Error: no conversation context available"
 
                     run_at = datetime.fromisoformat(run_at_str)
-                    job_id = self._scheduler.add_ai_one_shot_job(
+                    job_id = await self._scheduler.add_ai_one_shot_job(
                         run_at=run_at,
                         bot_id=bot_id,
                         chat_id=chat_id,
@@ -147,7 +147,7 @@ class SchedulerTool(Tool):
                     job_id = kwargs.get("job_id", "")
                     if not job_id:
                         return "Error: job_id is required for remove"
-                    removed = self._scheduler.remove_job(job_id)
+                    removed = await self._scheduler.remove_job(job_id)
                     if removed:
                         return f"Job {job_id} removed successfully."
                     return f"Job {job_id} not found."

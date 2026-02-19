@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Callable, Coroutine, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from panda_bot.core.session import SessionManager
     from panda_bot.messenger.models import OutgoingMessage
     from panda_bot.storage.conversation_repo import ConversationRepository
+    from panda_bot.storage.database import Database
 
 logger = get_logger(__name__)
 
@@ -29,8 +30,9 @@ logger = get_logger(__name__)
 class SchedulerService(Service):
     """Background task scheduler using APScheduler."""
 
-    def __init__(self, config: SchedulerServiceConfig):
+    def __init__(self, config: SchedulerServiceConfig, db: Database | None = None):
         self._config = config
+        self._db = db
         self._scheduler = AsyncIOScheduler(timezone=config.timezone)
         # App context for AI tasks (set after app initialization)
         self._bot_registry: BotRegistry | None = None
@@ -58,6 +60,93 @@ class SchedulerService(Service):
     @property
     def service_name(self) -> str:
         return "scheduler"
+
+    async def _save_job(
+        self,
+        job_id: str,
+        bot_id: str,
+        chat_id: str,
+        task_prompt: str,
+        cron_expr: str | None = None,
+        run_at: str | None = None,
+    ) -> None:
+        """Persist a scheduled job to the database."""
+        if not self._db:
+            return
+        payload = json.dumps({"chat_id": chat_id, "task_prompt": task_prompt})
+        await self._db.conn.execute(
+            "INSERT OR REPLACE INTO scheduled_tasks "
+            "(id, bot_id, session_id, cron_expr, run_at, payload_json, enabled) "
+            "VALUES (?, ?, '', ?, ?, ?, 1)",
+            (job_id, bot_id, cron_expr, run_at, payload),
+        )
+        await self._db.conn.commit()
+        logger.info("job_persisted", job_id=job_id, bot_id=bot_id)
+
+    async def _delete_job(self, job_id: str) -> None:
+        """Remove a persisted job from the database."""
+        if not self._db:
+            return
+        await self._db.conn.execute(
+            "DELETE FROM scheduled_tasks WHERE id = ?", (job_id,)
+        )
+        await self._db.conn.commit()
+        logger.info("job_persistence_deleted", job_id=job_id)
+
+    async def load_persisted_jobs(self) -> None:
+        """Load persisted jobs from DB and re-register them in APScheduler."""
+        if not self._db:
+            logger.warning("load_persisted_jobs_no_db")
+            return
+
+        cursor = await self._db.conn.execute(
+            "SELECT id, bot_id, cron_expr, run_at, payload_json "
+            "FROM scheduled_tasks WHERE enabled = 1"
+        )
+        rows = await cursor.fetchall()
+        loaded = 0
+
+        for row in rows:
+            job_id = row["id"]
+            bot_id = row["bot_id"]
+            cron_expr = row["cron_expr"]
+            run_at_str = row["run_at"]
+            payload = json.loads(row["payload_json"])
+            chat_id = payload["chat_id"]
+            task_prompt = payload["task_prompt"]
+
+            try:
+                if cron_expr:
+                    # Re-register cron job directly (skip _save_job since already in DB)
+                    self.add_cron_job(
+                        cron_expr=cron_expr,
+                        callback=self._run_ai_task,
+                        job_id=job_id,
+                        bot_id=bot_id,
+                        chat_id=chat_id,
+                        task_prompt=task_prompt,
+                    )
+                    loaded += 1
+                elif run_at_str:
+                    run_at = datetime.fromisoformat(run_at_str)
+                    if run_at > datetime.now(tz=run_at.tzinfo or timezone.utc):
+                        self.add_one_shot_job(
+                            run_at=run_at,
+                            callback=self._run_ai_task,
+                            job_id=job_id,
+                            bot_id=bot_id,
+                            chat_id=chat_id,
+                            task_prompt=task_prompt,
+                        )
+                        loaded += 1
+                    else:
+                        # Past one-shot job, clean up
+                        await self._delete_job(job_id)
+                        logger.info("persisted_job_expired", job_id=job_id)
+            except Exception as e:
+                logger.error("persisted_job_load_error", job_id=job_id, error=str(e))
+
+        logger.info("persisted_jobs_loaded", count=loaded, total=len(rows))
 
     async def start(self) -> None:
         self._scheduler.start()
@@ -105,7 +194,7 @@ class SchedulerService(Service):
         logger.info("one_shot_job_added", job_id=job_id, run_at=str(run_at))
         return job_id
 
-    def add_ai_cron_job(
+    async def add_ai_cron_job(
         self,
         cron_expr: str,
         bot_id: str,
@@ -114,7 +203,7 @@ class SchedulerService(Service):
         job_id: Optional[str] = None,
     ) -> str:
         """Add a cron job that runs an AI task and sends results to a chat."""
-        return self.add_cron_job(
+        job_id = self.add_cron_job(
             cron_expr=cron_expr,
             callback=self._run_ai_task,
             job_id=job_id,
@@ -122,8 +211,16 @@ class SchedulerService(Service):
             chat_id=chat_id,
             task_prompt=task_prompt,
         )
+        await self._save_job(
+            job_id=job_id,
+            bot_id=bot_id,
+            chat_id=chat_id,
+            task_prompt=task_prompt,
+            cron_expr=cron_expr,
+        )
+        return job_id
 
-    def add_ai_one_shot_job(
+    async def add_ai_one_shot_job(
         self,
         run_at: datetime,
         bot_id: str,
@@ -132,7 +229,7 @@ class SchedulerService(Service):
         job_id: Optional[str] = None,
     ) -> str:
         """Add a one-shot job that runs an AI task and sends results to a chat."""
-        return self.add_one_shot_job(
+        job_id = self.add_one_shot_job(
             run_at=run_at,
             callback=self._run_ai_task,
             job_id=job_id,
@@ -140,6 +237,14 @@ class SchedulerService(Service):
             chat_id=chat_id,
             task_prompt=task_prompt,
         )
+        await self._save_job(
+            job_id=job_id,
+            bot_id=bot_id,
+            chat_id=chat_id,
+            task_prompt=task_prompt,
+            run_at=run_at.isoformat(),
+        )
+        return job_id
 
     async def _run_ai_task(self, bot_id: str, chat_id: str, task_prompt: str) -> None:
         """Execute an AI task and send the result to a specific chat."""
@@ -243,10 +348,11 @@ class SchedulerService(Service):
             except Exception:
                 pass
 
-    def remove_job(self, job_id: str) -> bool:
+    async def remove_job(self, job_id: str) -> bool:
         """Remove a scheduled job. Returns True if found and removed."""
         try:
             self._scheduler.remove_job(job_id)
+            await self._delete_job(job_id)
             logger.info("job_removed", job_id=job_id)
             return True
         except Exception:
