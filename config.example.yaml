@@ -58,6 +58,8 @@ services:
     browser_type: chromium
     timeout_ms: 30000
   scheduler:
+    # 스케줄러 기본 timezone
+    # 한국 : "Asia/Seoul"
     timezone: UTC
     max_concurrent_jobs: 5
 

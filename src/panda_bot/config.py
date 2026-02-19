@@ -50,7 +50,7 @@ class BrowserServiceConfig(BaseModel):
 
 
 class SchedulerServiceConfig(BaseModel):
-    timezone: str = "UTC"
+    timezone: str = "Asia/Seoul"
     max_concurrent_jobs: int = 5
 
 
