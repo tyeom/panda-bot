@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -169,6 +170,7 @@ class MessageHandler:
         self._session_manager = session_manager
         self._tool_registry = tool_registry
         self._bot_config = bot_config
+        self._running_tasks: dict[str, asyncio.Task] = {}
 
     async def handle(self, message: IncomingMessage) -> None:
         """Process an incoming message end-to-end."""
@@ -221,6 +223,19 @@ class MessageHandler:
             )
             return
 
+        if text.lower() == "/stop":
+            task = self._running_tasks.get(chat_id)
+            if task and not task.done():
+                task.cancel()
+                await self._adapter.send_message(
+                    OutgoingMessage(chat_id=chat_id, text="작업이 중단되었습니다.")
+                )
+            else:
+                await self._adapter.send_message(
+                    OutgoingMessage(chat_id=chat_id, text="진행 중인 작업이 없습니다.")
+                )
+            return
+
         # Show typing indicator
         await self._adapter.send_typing_indicator(chat_id)
 
@@ -254,11 +269,38 @@ class MessageHandler:
 
         ai_config = self._bot_config.ai
 
+        # Process AI and respond (wrapped in cancellable task)
+        task = asyncio.create_task(
+            self._process_and_respond(
+                bot_id, chat_id, session_id, messages, ai_config, attachments,
+            )
+        )
+        self._running_tasks[chat_id] = task
+        try:
+            await task
+        except asyncio.CancelledError:
+            logger.info("task_cancelled_by_user", bot_id=bot_id, chat_id=chat_id)
+        finally:
+            self._running_tasks.pop(chat_id, None)
+
+    async def _process_and_respond(
+        self,
+        bot_id: str,
+        chat_id: str,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        ai_config: Any,
+        attachments: list[Attachment] | None,
+    ) -> None:
+        """Run AI processing and send response. Supports cancellation via asyncio task."""
+        repo = self._session_manager.repo
+
         # Set conversation context on scheduler tool so it knows which chat to target
         scheduler_tool = self._tool_registry.get("scheduler")
         if scheduler_tool and hasattr(scheduler_tool, "set_context"):
             scheduler_tool.set_context(bot_id=bot_id, chat_id=chat_id)
 
+        response_text = ""
         try:
             if self._ai_client.supports_tool_loop:
                 # Anthropic API: use tool_runner loop
@@ -280,11 +322,11 @@ class MessageHandler:
             else:
                 # Claude Code CLI: use text-based tool loop with panda-bot tools
                 # CLI doesn't support vision — save images as temp files and reference paths
+                img_refs: list[str] = []
                 if attachments:
                     import tempfile
                     import os
 
-                    img_refs: list[str] = []
                     for att in attachments:
                         ext = att.media_type.split("/")[-1] if "/" in att.media_type else "bin"
                         tmp = tempfile.NamedTemporaryFile(
@@ -301,24 +343,27 @@ class MessageHandler:
                             m["content"] += paths_note
                             break
 
-                tools = self._tool_registry.get_tools_by_names(ai_config.tools)
-                response_text = await self._run_claude_code_tool_loop(
-                    messages=messages,
-                    system=ai_config.system_prompt,
-                    tools=tools,
-                    bot_id=bot_id,
-                    session_id=session_id,
-                    chat_id=chat_id,
-                )
-
-                # Clean up temp files
-                if attachments:
+                try:
+                    tools = self._tool_registry.get_tools_by_names(ai_config.tools)
+                    response_text = await self._run_claude_code_tool_loop(
+                        messages=messages,
+                        system=ai_config.system_prompt,
+                        tools=tools,
+                        bot_id=bot_id,
+                        session_id=session_id,
+                        chat_id=chat_id,
+                    )
+                finally:
+                    # Clean up temp files even on cancellation
                     for path in img_refs:
                         try:
+                            import os
                             os.unlink(path)
                         except OSError:
                             pass
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
             logger.error("ai_error", bot_id=bot_id, error=str(e))
             response_text = f"An error occurred: {e}"

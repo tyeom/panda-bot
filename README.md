@@ -299,6 +299,7 @@ Claude가 scheduler 도구 호출:
 | `/reset` | 현재 세션 초기화 (대화 기록 리셋) |
 | `/model` | 현재 봇의 AI 백엔드, 모델, 도구 정보 확인 |
 | `/search <query>` | 대화 기록 전문 검색 |
+| `/stop` | 현재 작업중인 tool 중지 |
 
 ## 기술 스택
 

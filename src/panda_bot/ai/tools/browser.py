@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from panda_bot.ai.tools.base import Tool
@@ -13,6 +14,7 @@ class BrowserTool(Tool):
 
     The browser maintains a persistent session across calls, so cookies,
     localStorage, and sessionStorage are preserved between actions.
+    Popup windows are auto-detected and can be managed with list_pages/switch_page/close_page.
     """
 
     def __init__(self, browser_service: BrowserService):
@@ -30,6 +32,8 @@ class BrowserTool(Tool):
             "Cookies and login state are maintained across calls. "
             "Actions: open a page, get HTML, take screenshots, evaluate JavaScript, "
             "click elements, fill form fields, or clear the session. "
+            "Popup windows are auto-detected on click and can be managed with "
+            "list_pages, switch_page, and close_page. "
             "If url is omitted, the action runs on the current page."
         )
 
@@ -40,16 +44,22 @@ class BrowserTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["open", "html", "screenshot", "evaluate", "click", "fill", "clear_session"],
+                    "enum": [
+                        "open", "html", "screenshot", "evaluate", "click", "fill",
+                        "clear_session", "list_pages", "switch_page", "close_page",
+                    ],
                     "description": (
                         "Action to perform: "
                         "'open' = get text content, "
                         "'html' = get raw HTML, "
                         "'screenshot' = take a screenshot, "
                         "'evaluate' = run JavaScript, "
-                        "'click' = click an element and extract content, "
+                        "'click' = click an element and extract content (auto-detects popups), "
                         "'fill' = fill a form field (input/textarea), "
-                        "'clear_session' = clear cookies and session data"
+                        "'clear_session' = clear cookies and session data, "
+                        "'list_pages' = list all open pages (main + popups), "
+                        "'switch_page' = switch to a page by index, "
+                        "'close_page' = close current page and switch back"
                     ),
                 },
                 "url": {
@@ -75,6 +85,10 @@ class BrowserTool(Tool):
                 "full_page": {
                     "type": "boolean",
                     "description": "Whether to capture full page screenshot (default: false)",
+                },
+                "page_index": {
+                    "type": "integer",
+                    "description": "Page index for 'switch_page' action (from 'list_pages' result)",
                 },
             },
             "required": ["action"],
@@ -118,6 +132,16 @@ class BrowserTool(Tool):
                     return await self._browser.fill(selector, value, url)
                 case "clear_session":
                     return await self._browser.clear_session()
+                case "list_pages":
+                    pages = await self._browser.list_pages()
+                    return json.dumps(pages, indent=2, ensure_ascii=False)
+                case "switch_page":
+                    page_index = kwargs.get("page_index")
+                    if page_index is None:
+                        return "Error: page_index is required for switch_page action"
+                    return await self._browser.switch_page(int(page_index))
+                case "close_page":
+                    return await self._browser.close_page()
                 case _:
                     return f"Error: unknown action '{action}'"
         except Exception as e:

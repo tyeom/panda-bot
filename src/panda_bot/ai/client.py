@@ -242,10 +242,20 @@ class ClaudeCodeClient(AIClient):
                 env=env,
             )
 
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input=prompt.encode("utf-8")),
-                timeout=self._timeout,
-            )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(input=prompt.encode("utf-8")),
+                    timeout=self._timeout,
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                logger.error("claude_code_timeout", timeout=self._timeout)
+                return AIResponse(text=f"Claude Code timed out after {self._timeout} seconds.")
+            except asyncio.CancelledError:
+                process.kill()
+                await process.wait()
+                raise
 
             stdout_text = stdout.decode("utf-8", errors="replace").strip()
             stderr_text = stderr.decode("utf-8", errors="replace").strip()
@@ -262,9 +272,6 @@ class ClaudeCodeClient(AIClient):
 
             return self._parse_response(stdout_text)
 
-        except asyncio.TimeoutError:
-            logger.error("claude_code_timeout", timeout=self._timeout)
-            return AIResponse(text=f"Claude Code timed out after {self._timeout} seconds.")
         except FileNotFoundError:
             logger.error("claude_code_not_found", cli_path=self._cli_path)
             return AIResponse(

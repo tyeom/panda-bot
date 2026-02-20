@@ -123,7 +123,7 @@ class BrowserService(Service):
     async def click_and_extract(
         self, selector: str, url: str | None = None, extract_selector: str | None = None
     ) -> str:
-        """Click an element and extract content. Navigates first if url is provided."""
+        """Click an element and extract content. Auto-detects and switches to popups."""
         async with self._lock:
             page = await self._ensure_page()
             if url:
@@ -132,12 +132,36 @@ class BrowserService(Service):
                     wait_until="domcontentloaded",
                     timeout=self._config.timeout_ms,
                 )
+
+            # Track pages before click for popup detection
+            pages_before = list(self._context.pages)  # type: ignore[union-attr]
+
             await page.click(selector, timeout=self._config.timeout_ms)
             await page.wait_for_load_state("domcontentloaded")
 
+            # Check for popup windows opened by the click
+            popup_msg = ""
+            await asyncio.sleep(0.5)
+            new_pages = [
+                p for p in self._context.pages  # type: ignore[union-attr]
+                if p not in pages_before and not p.is_closed()
+            ]
+            if new_pages:
+                self._page = new_pages[-1]
+                try:
+                    await self._page.wait_for_load_state("domcontentloaded", timeout=5000)
+                except Exception:
+                    pass
+                popup_msg = (
+                    f"\n[Popup detected: auto-switched to '{self._page.url}'. "
+                    "Use 'list_pages' to see all pages, 'switch_page' to switch.]"
+                )
+                page = self._page
+                logger.info("popup_detected", url=self._page.url)
+
             target = extract_selector or "body"
             content = await page.inner_text(target)
-            return content[:50000]
+            return content[:50000] + popup_msg
 
     async def fill(self, selector: str, value: str, url: str | None = None) -> str:
         """Fill a form field identified by CSS selector. Navigates first if url is provided."""
@@ -163,3 +187,44 @@ class BrowserService(Service):
             self._page = None
             logger.info("browser_session_cleared")
             return "Browser session cleared."
+
+    async def list_pages(self) -> list[dict]:
+        """List all open pages in the browser context."""
+        async with self._lock:
+            pages = self._context.pages  # type: ignore[union-attr]
+            current = self._page
+            result = []
+            for i, page in enumerate(pages):
+                result.append({
+                    "index": i,
+                    "url": page.url,
+                    "title": await page.title(),
+                    "active": page is current,
+                })
+            return result
+
+    async def switch_page(self, index: int) -> str:
+        """Switch the active page to the one at the given index."""
+        async with self._lock:
+            pages = self._context.pages  # type: ignore[union-attr]
+            if index < 0 or index >= len(pages):
+                return f"Error: invalid page index {index}. Open pages: {len(pages)}"
+            self._page = pages[index]
+            url = self._page.url
+            logger.info("page_switched", index=index, url=url)
+            return f"Switched to page {index}: {url}"
+
+    async def close_page(self) -> str:
+        """Close the current page and switch to another open page."""
+        async with self._lock:
+            if self._page is None:
+                return "No page to close."
+            pages = self._context.pages  # type: ignore[union-attr]
+            if len(pages) <= 1:
+                return "Cannot close the last remaining page. Use 'clear_session' instead."
+            current = self._page
+            remaining = [p for p in pages if p is not current]
+            self._page = remaining[-1]
+            await current.close()
+            logger.info("page_closed", switched_to=self._page.url)
+            return f"Page closed. Switched to: {self._page.url}"
