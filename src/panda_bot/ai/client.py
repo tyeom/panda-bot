@@ -254,7 +254,10 @@ class ClaudeCodeClient(AIClient):
                 return AIResponse(text=f"Claude Code timed out after {self._timeout} seconds.")
             except asyncio.CancelledError:
                 process.kill()
-                await process.wait()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=2.0)
+                except (asyncio.TimeoutError, asyncio.CancelledError):
+                    pass
                 raise
 
             stdout_text = stdout.decode("utf-8", errors="replace").strip()

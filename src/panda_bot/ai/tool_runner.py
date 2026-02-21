@@ -31,6 +31,7 @@ async def run_tool_loop(
     bot_id: str,
     session_id: str,
     chat_id: str,
+    cancel_event: asyncio.Event | None = None,
 ) -> str:
     """Execute the Claude tool-use loop until a final text response is produced.
 
@@ -40,6 +41,9 @@ async def run_tool_loop(
     rounds = 0
 
     while rounds < MAX_TOOL_ROUNDS:
+        if cancel_event and cancel_event.is_set():
+            logger.info("tool_loop_cancelled", bot_id=bot_id, round=rounds)
+            return "[작업이 중단되었습니다]"
         response = await ai_client.create_message(
             model=model,
             max_tokens=max_tokens,
@@ -110,14 +114,23 @@ async def run_tool_loop(
         if not tool_use_blocks:
             break
 
+        # Check for cancellation before executing tools
+        if cancel_event and cancel_event.is_set():
+            logger.info("tool_loop_cancelled_before_exec", bot_id=bot_id)
+            return "[작업이 중단되었습니다]"
+
         # Execute tool calls concurrently
         async def _execute_one(block: Any) -> tuple[str, str]:
+            if cancel_event and cancel_event.is_set():
+                return block.id, "[Cancelled]"
             tool = tool_registry.get(block.name)
             if tool is None:
                 return block.id, f"Error: unknown tool '{block.name}'"
             try:
                 result = await tool.execute(**block.input)
                 return block.id, result
+            except asyncio.CancelledError:
+                return block.id, "[Cancelled]"
             except Exception as e:
                 logger.error("tool_execution_error", tool=block.name, error=str(e))
                 return block.id, f"Error executing {block.name}: {e}"

@@ -170,7 +170,7 @@ class MessageHandler:
         self._session_manager = session_manager
         self._tool_registry = tool_registry
         self._bot_config = bot_config
-        self._running_tasks: dict[str, asyncio.Task] = {}
+        self._running_tasks: dict[str, tuple[asyncio.Task, asyncio.Event]] = {}
 
     async def handle(self, message: IncomingMessage) -> None:
         """Process an incoming message end-to-end."""
@@ -224,9 +224,12 @@ class MessageHandler:
             return
 
         if text.lower() == "/stop":
-            task = self._running_tasks.get(chat_id)
-            if task and not task.done():
-                task.cancel()
+            task_info = self._running_tasks.get(chat_id)
+            if task_info:
+                task, cancel_event = task_info
+                cancel_event.set()
+                if not task.done():
+                    task.cancel()
                 await self._adapter.send_message(
                     OutgoingMessage(chat_id=chat_id, text="작업이 중단되었습니다.")
                 )
@@ -269,19 +272,24 @@ class MessageHandler:
 
         ai_config = self._bot_config.ai
 
-        # Process AI and respond (wrapped in cancellable task)
+        # Process AI and respond (fire-and-forget so /stop can execute immediately)
+        cancel_event = asyncio.Event()
         task = asyncio.create_task(
             self._process_and_respond(
                 bot_id, chat_id, session_id, messages, ai_config, attachments,
+                cancel_event,
             )
         )
-        self._running_tasks[chat_id] = task
-        try:
-            await task
-        except asyncio.CancelledError:
-            logger.info("task_cancelled_by_user", bot_id=bot_id, chat_id=chat_id)
-        finally:
+        self._running_tasks[chat_id] = (task, cancel_event)
+
+        def _on_task_done(t: asyncio.Task) -> None:
             self._running_tasks.pop(chat_id, None)
+            if t.cancelled():
+                logger.info("task_cancelled_by_user", bot_id=bot_id, chat_id=chat_id)
+            elif t.exception():
+                logger.error("task_unhandled_error", bot_id=bot_id, error=str(t.exception()))
+
+        task.add_done_callback(_on_task_done)
 
     async def _process_and_respond(
         self,
@@ -291,8 +299,9 @@ class MessageHandler:
         messages: list[dict[str, Any]],
         ai_config: Any,
         attachments: list[Attachment] | None,
+        cancel_event: asyncio.Event | None = None,
     ) -> None:
-        """Run AI processing and send response. Supports cancellation via asyncio task."""
+        """Run AI processing and send response. Supports cancellation via cancel_event."""
         repo = self._session_manager.repo
 
         # Set conversation context on scheduler tool so it knows which chat to target
@@ -302,6 +311,9 @@ class MessageHandler:
 
         response_text = ""
         try:
+            if cancel_event and cancel_event.is_set():
+                return
+
             if self._ai_client.supports_tool_loop:
                 # Anthropic API: use tool_runner loop
                 tools = self._tool_registry.get_tools_by_names(ai_config.tools)
@@ -318,6 +330,7 @@ class MessageHandler:
                     bot_id=bot_id,
                     session_id=session_id,
                     chat_id=chat_id,
+                    cancel_event=cancel_event,
                 )
             else:
                 # Claude Code CLI: use text-based tool loop with panda-bot tools
@@ -352,6 +365,7 @@ class MessageHandler:
                         bot_id=bot_id,
                         session_id=session_id,
                         chat_id=chat_id,
+                        cancel_event=cancel_event,
                     )
                 finally:
                     # Clean up temp files even on cancellation
@@ -363,7 +377,7 @@ class MessageHandler:
                             pass
 
         except asyncio.CancelledError:
-            raise
+            return
         except Exception as e:
             logger.error("ai_error", bot_id=bot_id, error=str(e))
             response_text = f"An error occurred: {e}"
@@ -393,6 +407,7 @@ class MessageHandler:
         bot_id: str,
         session_id: str,
         chat_id: str,
+        cancel_event: asyncio.Event | None = None,
     ) -> str:
         """Run a text-based tool loop for Claude Code CLI backend.
 
@@ -443,10 +458,21 @@ class MessageHandler:
 
         rounds = 0
         while rounds < MAX_TOOL_ROUNDS:
+            # Check for cancellation at each iteration
+            if cancel_event and cancel_event.is_set():
+                logger.info("tool_loop_cancelled", bot_id=bot_id, round=rounds)
+                return "[작업이 중단되었습니다]"
+
             response = await self._ai_client.chat(
                 system=full_system,
                 messages=messages,
             )
+
+            # Check again after CLI call returns (cancel may have arrived during wait)
+            if cancel_event and cancel_event.is_set():
+                logger.info("tool_loop_cancelled_after_chat", bot_id=bot_id, round=rounds)
+                return "[작업이 중단되었습니다]"
+
             response_text = response.text
 
             # Check for tool calls in the response
@@ -489,6 +515,11 @@ class MessageHandler:
             # Execute each tool call and collect results
             tool_results: list[str] = []
             for call_json in tool_calls:
+                # Check for cancellation before each tool execution
+                if cancel_event and cancel_event.is_set():
+                    logger.info("tool_execution_cancelled", bot_id=bot_id)
+                    return "[작업이 중단되었습니다]"
+
                 try:
                     call_data = json.loads(call_json)
                     tool_name = call_data.get("tool", "")
@@ -502,6 +533,9 @@ class MessageHandler:
                         result = await tool.execute(**tool_input)
 
                     tool_results.append(f"[Tool Result: {tool_name}]\n{result}")
+                except asyncio.CancelledError:
+                    logger.info("tool_execution_cancelled", bot_id=bot_id, tool=tool_name)
+                    return "[작업이 중단되었습니다]"
                 except (json.JSONDecodeError, Exception) as e:
                     tool_results.append(f"[Tool Error]\n{e}")
 
