@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import shlex
 from typing import Any
 
 from panda_bot.ai.client import AIClient
@@ -414,17 +415,20 @@ class MessageHandler:
             )
             return
 
-        parts = text.split()
+        try:
+            parts = shlex.split(text)
+        except ValueError:
+            parts = text.split()
         sub = parts[1].lower() if len(parts) > 1 else ""
 
         if sub == "list":
             result = self._mcp_manager.list_servers()
         elif sub == "remove" and len(parts) > 2:
-            result = await self._mcp_manager.remove_server(parts[2].strip("'\""))
+            result = await self._mcp_manager.remove_server(parts[2])
         elif sub == "add" and len(parts) > 3:
             # /mcp add <name> <package> [-e KEY=VAL ...]
-            name = parts[2].strip("'\"")
-            package = parts[3].strip("'\"")
+            name = parts[2]
+            package = parts[3]
             env = self._parse_mcp_env(parts[4:])
             result = await self._mcp_manager.add_server(
                 name=name,
@@ -435,11 +439,11 @@ class MessageHandler:
             result = (
                 "Usage:\n"
                 "  /mcp list\n"
-                "  /mcp add <name> <package> [-e KEY=VAL ...]\n"
+                "  /mcp add <name> <package> -e KEY=VAL\n"
                 "  /mcp remove <name>\n"
                 "\n"
-                "Example:\n"
-                '  /mcp add notion @notionhq/notion-mcp-server -e OPENAPI_MCP_HEADERS=\'{"Authorization":"Bearer ntn_xxx"}\''
+                "Example (Notion MCP):\n"
+                '  /mcp add notionApi @notionhq/notion-mcp-server -e OPENAPI_MCP_HEADERS=\'{"Authorization": "Bearer ntn_xxx", "Notion-Version": "2022-06-28"}\''
             )
 
         await self._adapter.send_message(
@@ -448,10 +452,7 @@ class MessageHandler:
 
     @staticmethod
     def _parse_mcp_env(tokens: list[str]) -> dict[str, str]:
-        """Parse -e KEY=VAL pairs from command tokens.
-
-        Supports quoted values: ``-e KEY='some value'``
-        """
+        """Parse -e KEY=VAL pairs from tokens (already split by shlex)."""
         env: dict[str, str] = {}
         i = 0
         while i < len(tokens):
@@ -460,9 +461,7 @@ class MessageHandler:
                 kv = tokens[i]
                 eq_idx = kv.find("=")
                 if eq_idx > 0:
-                    key = kv[:eq_idx]
-                    val = kv[eq_idx + 1:].strip("'\"")
-                    env[key] = val
+                    env[kv[:eq_idx]] = kv[eq_idx + 1:]
             i += 1
         return env
 
