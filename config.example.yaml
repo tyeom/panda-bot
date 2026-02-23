@@ -59,6 +59,8 @@ claude_code:
   cli_path: claude              # Path to claude CLI executable
   model: sonnet                 # "sonnet" | "opus" | "haiku" (default: sonnet)
   timeout: 300                  # Max seconds per request
+  permission_mode: bypassPermissions  # "default" | "bypassPermissions" (bot is non-interactive)
+  #api_key: ${ANTHROPIC_API_KEY} # Optional: API key auth (if unset, uses env var or OAuth)
   #allowed_tools: []             # Claude Code tool permissions (empty = default)
   allowed_tools:                                                                                                                                                                                                                                                       
       - "WebFetch"

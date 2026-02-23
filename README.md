@@ -47,6 +47,7 @@ src/panda_bot/
 │   ├── base.py          # Service ABC
 │   ├── browser.py       # Playwright 브라우저 서비스
 │   ├── scheduler.py     # APScheduler 스케줄러 서비스
+│   ├── mcp_manager.py   # MCP 서버 관리 (설치/제거/영속화)
 │   └── service_manager.py # 서비스 라이프사이클 관리
 └── storage/
     ├── database.py      # aiosqlite 래퍼
@@ -300,6 +301,9 @@ Claude가 scheduler 도구 호출:
 | `/model` | 현재 봇의 AI 백엔드, 모델, 도구 정보 확인 |
 | `/search <query>` | 대화 기록 전문 검색 |
 | `/stop` | 현재 작업중인 tool 중지 |
+| `/mcp list` | 등록된 MCP 서버 목록 확인 |
+| `/mcp add <name> <package> [-e KEY=VAL ...]` | 외부 MCP 서버 추가 |
+| `/mcp remove <name>` | MCP 서버 제거 |
 
 ## 기술 스택
 

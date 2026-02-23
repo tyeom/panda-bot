@@ -41,6 +41,8 @@ class ClaudeCodeConfig(BaseModel):
     model: str = "sonnet"  # e.g. "sonnet", "opus", "haiku"
     timeout: int = 300
     allowed_tools: list[str] = Field(default_factory=list)
+    api_key: Optional[str] = None  # Anthropic API key; if set, uses API auth instead of OAuth
+    permission_mode: str = "bypassPermissions"  # "default" | "bypassPermissions"
 
 
 class BrowserServiceConfig(BaseModel):

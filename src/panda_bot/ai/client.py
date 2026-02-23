@@ -152,6 +152,8 @@ class ClaudeCodeClient(AIClient):
         self._model: str = config.model
         self._timeout = config.timeout
         self._allowed_tools = config.allowed_tools
+        self._api_key: str | None = config.api_key
+        self._permission_mode: str = config.permission_mode
 
     @property
     def model_name(self) -> str:
@@ -217,9 +219,18 @@ class ClaudeCodeClient(AIClient):
             for tool_name in self._allowed_tools:
                 cmd.extend(["--allowedTools", tool_name])
 
+        # Permission mode (bypassPermissions for non-interactive bot usage)
+        if self._permission_mode and self._permission_mode != "default":
+            cmd.extend(["--permission-mode", self._permission_mode])
+
         # Pass system prompt via --system-prompt flag
         if system:
             cmd.extend(["--system-prompt", system])
+
+        # Resolve API key: explicit config > env var > OAuth (no key)
+        api_key = self._api_key or os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            cmd.extend(["--api-key", api_key])
 
         logger.info(
             "claude_code_request",
@@ -228,10 +239,11 @@ class ClaudeCodeClient(AIClient):
             prompt_length=len(prompt),
             system_length=len(system) if system else 0,
             cmd_length=sum(len(c) for c in cmd),
+            auth="api_key" if api_key else "oauth",
         )
 
         try:
-            # Remove ANTHROPIC_API_KEY from subprocess env so CLI uses subscription auth
+            # Remove ANTHROPIC_API_KEY from env to avoid CLI picking it up in addition to --api-key
             env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
 
             process = await asyncio.create_subprocess_exec(

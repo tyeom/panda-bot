@@ -17,6 +17,7 @@ from panda_bot.core.session import SessionManager
 from panda_bot.log import get_logger
 from panda_bot.messenger.base import MessengerAdapter
 from panda_bot.messenger.models import Attachment, IncomingMessage, OutgoingMessage
+from panda_bot.services.mcp_manager import McpManager
 from panda_bot.storage.models import ConversationRecord
 
 logger = get_logger(__name__)
@@ -164,12 +165,14 @@ class MessageHandler:
         session_manager: SessionManager,
         tool_registry: ToolRegistry,
         bot_config: BotConfig,
+        mcp_manager: McpManager | None = None,
     ):
         self._adapter = adapter
         self._ai_client = ai_client
         self._session_manager = session_manager
         self._tool_registry = tool_registry
         self._bot_config = bot_config
+        self._mcp_manager = mcp_manager
         self._running_tasks: dict[str, tuple[asyncio.Task, asyncio.Event]] = {}
 
     async def handle(self, message: IncomingMessage) -> None:
@@ -237,6 +240,10 @@ class MessageHandler:
                 await self._adapter.send_message(
                     OutgoingMessage(chat_id=chat_id, text="진행 중인 작업이 없습니다.")
                 )
+            return
+
+        if text.lower().startswith("/mcp"):
+            await self._handle_mcp_command(chat_id, text)
             return
 
         # Show typing indicator
@@ -398,6 +405,66 @@ class MessageHandler:
             await self._adapter.send_message(
                 OutgoingMessage(chat_id=chat_id, text="", attachments=pending_images)
             )
+
+    async def _handle_mcp_command(self, chat_id: str, text: str) -> None:
+        """Handle /mcp subcommands: list, add, remove."""
+        if not self._mcp_manager:
+            await self._adapter.send_message(
+                OutgoingMessage(chat_id=chat_id, text="MCP manager is not configured.")
+            )
+            return
+
+        parts = text.split()
+        sub = parts[1].lower() if len(parts) > 1 else ""
+
+        if sub == "list":
+            result = self._mcp_manager.list_servers()
+        elif sub == "remove" and len(parts) > 2:
+            result = await self._mcp_manager.remove_server(parts[2].strip("'\""))
+        elif sub == "add" and len(parts) > 3:
+            # /mcp add <name> <package> [-e KEY=VAL ...]
+            name = parts[2].strip("'\"")
+            package = parts[3].strip("'\"")
+            env = self._parse_mcp_env(parts[4:])
+            result = await self._mcp_manager.add_server(
+                name=name,
+                package=package,
+                env=env or None,
+            )
+        else:
+            result = (
+                "Usage:\n"
+                "  /mcp list\n"
+                "  /mcp add <name> <package> [-e KEY=VAL ...]\n"
+                "  /mcp remove <name>\n"
+                "\n"
+                "Example:\n"
+                '  /mcp add notion @notionhq/notion-mcp-server -e OPENAPI_MCP_HEADERS=\'{"Authorization":"Bearer ntn_xxx"}\''
+            )
+
+        await self._adapter.send_message(
+            OutgoingMessage(chat_id=chat_id, text=result)
+        )
+
+    @staticmethod
+    def _parse_mcp_env(tokens: list[str]) -> dict[str, str]:
+        """Parse -e KEY=VAL pairs from command tokens.
+
+        Supports quoted values: ``-e KEY='some value'``
+        """
+        env: dict[str, str] = {}
+        i = 0
+        while i < len(tokens):
+            if tokens[i] == "-e" and i + 1 < len(tokens):
+                i += 1
+                kv = tokens[i]
+                eq_idx = kv.find("=")
+                if eq_idx > 0:
+                    key = kv[:eq_idx]
+                    val = kv[eq_idx + 1:].strip("'\"")
+                    env[key] = val
+            i += 1
+        return env
 
     async def _run_claude_code_tool_loop(
         self,

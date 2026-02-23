@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from panda_bot.ai.client import AIClient, AnthropicClient, ClaudeCodeClient
 from panda_bot.ai.handler import MessageHandler
 from panda_bot.ai.tools.registry import ToolRegistry
@@ -10,6 +12,7 @@ from panda_bot.core.bot_registry import BotRegistry
 from panda_bot.core.session import SessionManager
 from panda_bot.log import get_logger
 from panda_bot.messenger.base import MessengerAdapter
+from panda_bot.services.mcp_manager import McpManager
 from panda_bot.services.service_manager import ServiceManager
 from panda_bot.storage.conversation_repo import ConversationRepository
 from panda_bot.storage.database import Database
@@ -28,6 +31,10 @@ class PandaBotApp:
         self.service_manager = ServiceManager(config.services, db=self.db)
         self.tool_registry = ToolRegistry(self.service_manager)
         self.bot_registry = BotRegistry()
+        self.mcp_manager = McpManager(
+            config_path=Path(config.data_dir) / "mcp_servers.json",
+            cli_path=config.claude_code.cli_path,
+        )
 
     async def start(self) -> None:
         """Initialize and start all components."""
@@ -62,6 +69,9 @@ class PandaBotApp:
         # 4.1 Restore persisted scheduled jobs from DB
         await self.service_manager.get_scheduler().load_persisted_jobs()
 
+        # 4.2 Re-register persisted MCP servers with Claude CLI
+        await self.mcp_manager.ensure_servers()
+
         # 5. Bot adapters
         for bot_cfg in self.config.bots:
             try:
@@ -73,6 +83,7 @@ class PandaBotApp:
                     session_manager=self.session_manager,
                     tool_registry=self.tool_registry,
                     bot_config=bot_cfg,
+                    mcp_manager=self.mcp_manager,
                 )
                 adapter.on_message(handler.handle)
                 await adapter.start()

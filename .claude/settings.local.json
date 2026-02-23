@@ -19,7 +19,14 @@
       "Bash(claude -p --output-format json --model sonnet --system-prompt $SYSTEM)",
       "Bash(python -c:*)",
       "Bash(python -c \"import ast; ast.parse\\(open\\(''src/panda_bot/ai/handler.py''\\).read\\(\\)\\); print\\(''handler.py OK''\\)\")",
-      "Bash(python -m py_compile:*)"
+      "Bash(python -m py_compile:*)",
+      "Bash(claude mcp --help:*)",
+      "Bash(claude mcp add --help:*)",
+      "Bash(claude mcp:*)",
+      "Bash(pip3 install:*)",
+      "Bash(timeout:*)",
+      "Bash(echo:*)",
+      "Bash(claude -p --help:*)"
     ]
   }
 }
