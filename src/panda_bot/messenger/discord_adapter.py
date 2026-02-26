@@ -116,16 +116,16 @@ class DiscordAdapter(MessengerAdapter):
         text = message.content or ""
         attachments: list[Attachment] = []
 
-        # Download image attachments
+        # Download all attachments (images, documents, etc.)
         for att in message.attachments:
-            if att.content_type and att.content_type.startswith("image/"):
-                try:
-                    data = await att.read()
-                    attachments.append(
-                        Attachment(data=data, media_type=att.content_type, filename=att.filename)
-                    )
-                except Exception as e:
-                    logger.warning("discord_attachment_download_error", error=str(e))
+            try:
+                data = await att.read()
+                media_type = att.content_type or "application/octet-stream"
+                attachments.append(
+                    Attachment(data=data, media_type=media_type, filename=att.filename)
+                )
+            except Exception as e:
+                logger.warning("discord_attachment_download_error", error=str(e))
 
         # Skip if no text and no attachments
         if not text and not attachments:

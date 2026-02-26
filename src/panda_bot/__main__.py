@@ -122,8 +122,6 @@ def _run(config_path: str, env_path: str) -> None:
 
     setup_logging(config.log_level)
 
-    app = PandaBotApp(config)
-
     async def _async_main() -> None:
         loop = asyncio.get_event_loop()
         stop_event = asyncio.Event()
@@ -138,11 +136,35 @@ def _run(config_path: str, env_path: str) -> None:
                 # Windows doesn't support add_signal_handler
                 signal.signal(sig, lambda s, f: _signal_handler())
 
-        await app.start()
+        cfg = config
+        while True:
+            app = PandaBotApp(cfg)
+            await app.start()
 
-        # Wait for shutdown signal
-        await stop_event.wait()
-        await app.stop()
+            # Wait for shutdown signal OR restart request
+            restart_task = asyncio.create_task(app.restart_requested.wait())
+            stop_task = asyncio.create_task(stop_event.wait())
+            done, pending = await asyncio.wait(
+                {restart_task, stop_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for t in pending:
+                t.cancel()
+
+            await app.stop()
+
+            if stop_event.is_set():
+                # Normal shutdown
+                break
+
+            # Restart: reload config
+            try:
+                cfg = load_config(config_path, env_path)
+                setup_logging(cfg.log_level)
+            except Exception as e:
+                print(f"Config reload error: {e}", file=sys.stderr)
+                # Fall back to previous config
+                cfg = config
 
     asyncio.run(_async_main())
 

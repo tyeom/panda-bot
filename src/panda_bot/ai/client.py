@@ -228,9 +228,8 @@ class ClaudeCodeClient(AIClient):
             cmd.extend(["--system-prompt", system])
 
         # Resolve API key: explicit config > env var > OAuth (no key)
+        # Claude Code CLI reads ANTHROPIC_API_KEY from env (not --api-key flag)
         api_key = self._api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if api_key:
-            cmd.extend(["--api-key", api_key])
 
         logger.info(
             "claude_code_request",
@@ -243,8 +242,10 @@ class ClaudeCodeClient(AIClient):
         )
 
         try:
-            # Remove ANTHROPIC_API_KEY from env to avoid CLI picking it up in addition to --api-key
-            env = {k: v for k, v in os.environ.items() if k != "ANTHROPIC_API_KEY"}
+            # Pass API key via environment variable
+            env = dict(os.environ)
+            if api_key:
+                env["ANTHROPIC_API_KEY"] = api_key
 
             process = await asyncio.create_subprocess_exec(
                 *cmd,

@@ -40,6 +40,7 @@ class ToolRegistry:
         from panda_bot.ai.tools.executor import ExecutorTool
         from panda_bot.ai.tools.filesystem import FileSystemTool
         from panda_bot.ai.tools.scheduler import SchedulerTool
+        from panda_bot.ai.tools.screen_capture import ScreenCaptureTool
 
         browser_service = self._service_manager.get_browser()
         scheduler_service = self._service_manager.get_scheduler()
@@ -48,3 +49,4 @@ class ToolRegistry:
         self.register(FileSystemTool())
         self.register(ExecutorTool())
         self.register(SchedulerTool(scheduler_service))
+        self.register(ScreenCaptureTool())

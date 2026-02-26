@@ -167,6 +167,7 @@ class MessageHandler:
         tool_registry: ToolRegistry,
         bot_config: BotConfig,
         mcp_manager: McpManager | None = None,
+        restart_callback: Any | None = None,
     ):
         self._adapter = adapter
         self._ai_client = ai_client
@@ -174,6 +175,7 @@ class MessageHandler:
         self._tool_registry = tool_registry
         self._bot_config = bot_config
         self._mcp_manager = mcp_manager
+        self._restart_callback = restart_callback
         self._running_tasks: dict[str, tuple[asyncio.Task, asyncio.Event]] = {}
 
     async def handle(self, message: IncomingMessage) -> None:
@@ -186,9 +188,16 @@ class MessageHandler:
         if not text and not attachments:
             return
 
-        # When image is sent without text, use placeholder
+        # When file(s) sent without text, use appropriate placeholder
         if not text and attachments:
-            text = "[Image]"
+            has_image = any(a.media_type.startswith("image/") for a in attachments)
+            has_file = any(not a.media_type.startswith("image/") for a in attachments)
+            if has_image and has_file:
+                text = "[Attachment]"
+            elif has_image:
+                text = "[Image]"
+            else:
+                text = "[File]"
 
         # Handle special commands
         if text.lower() == "/reset":
@@ -243,6 +252,18 @@ class MessageHandler:
                 )
             return
 
+        if text.lower() == "/restart":
+            if self._restart_callback:
+                await self._adapter.send_message(
+                    OutgoingMessage(chat_id=chat_id, text="봇을 재시작합니다...")
+                )
+                self._restart_callback()
+            else:
+                await self._adapter.send_message(
+                    OutgoingMessage(chat_id=chat_id, text="재시작 기능을 사용할 수 없습니다.")
+                )
+            return
+
         if text.lower().startswith("/mcp"):
             await self._handle_mcp_command(chat_id, text)
             return
@@ -262,8 +283,18 @@ class MessageHandler:
             platform=message.platform.value,
         )
 
-        # Save user message (prefix with [Image] if attachment present)
-        save_text = f"[Image] {text}" if attachments and not text.startswith("[Image]") else text
+        # Save user message (prefix with attachment label if present)
+        if attachments and not text.startswith(("[Image]", "[File]", "[Attachment]")):
+            has_image = any(a.media_type.startswith("image/") for a in attachments)
+            has_file = any(not a.media_type.startswith("image/") for a in attachments)
+            if has_image and has_file:
+                save_text = f"[Attachment] {text}"
+            elif has_image:
+                save_text = f"[Image] {text}"
+            else:
+                save_text = f"[File] {text}"
+        else:
+            save_text = text
         await repo.save_turn(
             ConversationRecord(
                 bot_id=bot_id,
@@ -342,8 +373,8 @@ class MessageHandler:
                 )
             else:
                 # Claude Code CLI: use text-based tool loop with panda-bot tools
-                # CLI doesn't support vision — save images as temp files and reference paths
-                img_refs: list[str] = []
+                # CLI doesn't support vision — save attachments as temp files and reference paths
+                att_refs: list[str] = []
                 if attachments:
                     import tempfile
                     import os
@@ -351,14 +382,14 @@ class MessageHandler:
                     for att in attachments:
                         ext = att.media_type.split("/")[-1] if "/" in att.media_type else "bin"
                         tmp = tempfile.NamedTemporaryFile(
-                            suffix=f".{ext}", prefix="panda_img_", delete=False
+                            suffix=f".{ext}", prefix="panda_att_", delete=False
                         )
                         tmp.write(att.data)
                         tmp.close()
-                        img_refs.append(tmp.name)
+                        att_refs.append(tmp.name)
 
                     # Append file paths to last user message so CLI can reference them
-                    paths_note = "\n[Attached images saved to: " + ", ".join(img_refs) + "]"
+                    paths_note = "\n[Attached files saved to: " + ", ".join(att_refs) + "]"
                     for m in reversed(messages):
                         if m.get("role") == "user" and isinstance(m.get("content"), str):
                             m["content"] += paths_note
@@ -377,7 +408,7 @@ class MessageHandler:
                     )
                 finally:
                     # Clean up temp files even on cancellation
-                    for path in img_refs:
+                    for path in att_refs:
                         try:
                             import os
                             os.unlink(path)

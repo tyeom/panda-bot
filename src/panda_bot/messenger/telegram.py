@@ -49,6 +49,10 @@ class TelegramAdapter(MessengerAdapter):
         self._app.add_handler(
             TGMessageHandler(filters.PHOTO, self._on_telegram_message)
         )
+        # Handle document (file) messages
+        self._app.add_handler(
+            TGMessageHandler(filters.Document.ALL, self._on_telegram_message)
+        )
 
         await self._app.initialize()
         await self._app.start()
@@ -69,16 +73,29 @@ class TelegramAdapter(MessengerAdapter):
         chat_id = int(message.chat_id)
         reply_id = int(message.reply_to_message_id) if message.reply_to_message_id else None
 
-        # Send image attachments
+        # Send attachments (images via send_photo, others via send_document)
         if message.attachments:
+            caption_sent = False
             for att in message.attachments:
+                caption = (message.text or None) if not caption_sent else None
                 if att.media_type.startswith("image/"):
                     await self._app.bot.send_photo(
                         chat_id=chat_id,
                         photo=att.data,
-                        caption=message.text or None,
+                        caption=caption,
                         reply_to_message_id=reply_id,
                     )
+                else:
+                    import io
+                    await self._app.bot.send_document(
+                        chat_id=chat_id,
+                        document=io.BytesIO(att.data),
+                        filename=att.filename,
+                        caption=caption,
+                        reply_to_message_id=reply_id,
+                    )
+                if caption:
+                    caption_sent = True
             return
 
         parse_mode = None
@@ -122,6 +139,20 @@ class TelegramAdapter(MessengerAdapter):
                 )
             except Exception as e:
                 logger.warning("telegram_photo_download_error", error=str(e))
+
+        # Download document (file) if present
+        if msg.document:
+            try:
+                doc = msg.document
+                tg_file = await doc.get_file()
+                doc_bytes = await tg_file.download_as_bytearray()
+                media_type = doc.mime_type or "application/octet-stream"
+                filename = doc.file_name or "document"
+                attachments.append(
+                    Attachment(data=bytes(doc_bytes), media_type=media_type, filename=filename)
+                )
+            except Exception as e:
+                logger.warning("telegram_document_download_error", error=str(e))
 
         # Skip if no text and no attachments
         if not text and not attachments:

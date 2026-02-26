@@ -10,6 +10,18 @@ from panda_bot.storage.models import ConversationRecord
 if TYPE_CHECKING:
     from panda_bot.messenger.models import Attachment
 
+_TEXT_PREFIXES = ("text/",)
+_TEXT_TYPES = frozenset({
+    "application/json", "application/xml", "application/javascript",
+    "application/x-yaml", "application/sql", "application/x-sh",
+    "application/xhtml+xml", "application/csv",
+})
+
+
+def _is_text_media_type(media_type: str) -> bool:
+    """Return True if the media type represents a human-readable text format."""
+    return media_type.startswith(_TEXT_PREFIXES) or media_type in _TEXT_TYPES
+
 
 def build_messages(
     history: list[ConversationRecord],
@@ -73,7 +85,7 @@ def build_messages(
         else:
             i += 1
 
-    # Append image blocks to the last user message
+    # Append attachment blocks to the last user message
     if current_attachments and messages:
         for idx in range(len(messages) - 1, -1, -1):
             msg = messages[idx]
@@ -83,18 +95,44 @@ def build_messages(
             # Convert plain string content to list format
             if isinstance(content, str):
                 content = [{"type": "text", "text": content}]
-            # Append image content blocks
+            # Append content blocks based on media type
             for att in current_attachments:
-                content.append(
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": att.media_type,
-                            "data": base64.b64encode(att.data).decode(),
-                        },
-                    }
-                )
+                if att.media_type.startswith("image/"):
+                    # Image: base64 image block
+                    content.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": att.media_type,
+                                "data": base64.b64encode(att.data).decode(),
+                            },
+                        }
+                    )
+                elif _is_text_media_type(att.media_type):
+                    # Text file: decode and include contents
+                    try:
+                        text_content = att.data.decode("utf-8")
+                    except UnicodeDecodeError:
+                        text_content = att.data.decode("utf-8", errors="replace")
+                    content.append(
+                        {
+                            "type": "text",
+                            "text": f"[File: {att.filename}]\n{text_content}",
+                        }
+                    )
+                else:
+                    # Binary file: include metadata only
+                    size_kb = len(att.data) / 1024
+                    content.append(
+                        {
+                            "type": "text",
+                            "text": (
+                                f"[File: {att.filename} "
+                                f"({att.media_type}, {size_kb:.1f} KB) — binary file, content not shown]"
+                            ),
+                        }
+                    )
             messages[idx]["content"] = content
             break
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from panda_bot.ai.client import AIClient, AnthropicClient, ClaudeCodeClient
@@ -35,6 +36,7 @@ class PandaBotApp:
             config_path=Path(config.data_dir) / "mcp_servers.json",
             cli_path=config.claude_code.cli_path,
         )
+        self.restart_requested = asyncio.Event()
 
     async def start(self) -> None:
         """Initialize and start all components."""
@@ -84,6 +86,7 @@ class PandaBotApp:
                     tool_registry=self.tool_registry,
                     bot_config=bot_cfg,
                     mcp_manager=self.mcp_manager,
+                    restart_callback=self._request_restart,
                 )
                 adapter.on_message(handler.handle)
                 await adapter.start()
@@ -110,6 +113,11 @@ class PandaBotApp:
         await self.service_manager.stop_all()
         await self.db.close()
         logger.info("panda_bot_stopped")
+
+    def _request_restart(self) -> None:
+        """Signal that a restart has been requested."""
+        logger.info("restart_requested")
+        self.restart_requested.set()
 
     def _create_ai_client(self, bot_cfg: BotConfig) -> AIClient:
         """Create an AI client based on the bot's backend configuration."""
