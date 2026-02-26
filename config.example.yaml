@@ -34,6 +34,7 @@ bots:
         - filesystem
         - executor
         - scheduler
+        - screen_capture
 
   # Example: Discord bot using Claude Code CLI
   - id: panda-discord

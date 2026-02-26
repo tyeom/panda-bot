@@ -304,6 +304,7 @@ Claude가 scheduler 도구 호출:
 | `/mcp list` | 등록된 MCP 서버 목록 확인 |
 | `/mcp add <name> <package> [-e KEY=VAL ...]` | 외부 MCP 서버 추가 |
 | `/mcp remove <name>` | MCP 서버 제거 |
+| `/restart` | 봇 재시작(채팅으로 환경구성 재구성 요청 이후 재시작시 바로 반영) |
 
 ## 기술 스택
 
