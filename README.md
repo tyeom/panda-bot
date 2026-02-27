@@ -33,7 +33,8 @@ src/panda_bot/
 │       ├── browser.py   # 웹 브라우징 도구
 │       ├── filesystem.py # 파일 시스템 도구
 │       ├── executor.py  # 프로그램 실행 도구
-│       └── scheduler.py # 스케줄러 도구
+│       ├── scheduler.py # 스케줄러 도구
+│       └── screen_capture.py # pc 모니터 스크린캡쳐 도구
 ├── core/
 │   ├── bot_registry.py  # 실행 중인 봇 어댑터 관리
 │   ├── session.py       # 봇별/채팅별 세션 관리
@@ -138,10 +139,11 @@ AI가 대화 중 호출할 수 있는 panda-bot 내장 도구 목록입니다:
 ```yaml
 ai:
   tools:
-    - browser       # 웹 브라우징 (Playwright)
-    - filesystem    # 파일 시스템 탐색
-    - executor      # 프로그램/스크립트 실행
-    - scheduler     # 작업 예약 (cron, 일회성)
+    - browser         # 웹 브라우징 (Playwright)
+    - filesystem      # 파일 시스템 탐색
+    - executor        # 프로그램/스크립트 실행
+    - scheduler       # 작업 예약 (cron, 일회성)
+    - screen_capture  # 모니터 스크린캡쳐
 ```
 
 | 도구 | 기능 |
@@ -150,6 +152,7 @@ ai:
 | `filesystem` | 디렉토리 목록, 파일 읽기, 파일 정보, 이름 패턴 검색 |
 | `executor` | 쉘 커맨드 및 스크립트 파일 실행 |
 | `scheduler` | cron/일회성 AI 작업 예약, 작업 목록 조회, 작업 삭제 |
+| `screen_capture` | 모니터 화면 스크린캡쳐 처리 |
 
 ### model - Claude Code CLI 모델 선택
 
