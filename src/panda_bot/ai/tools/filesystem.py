@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import io
+import mimetypes
 import os
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -30,21 +33,30 @@ class FileSystemTool(Tool):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "read", "info", "search"],
+                    "enum": ["list", "read", "info", "search", "send_file", "compress"],
                     "description": (
                         "'list' = list directory contents, "
-                        "'read' = read file content, "
+                        "'read' = read file content as text, "
                         "'info' = get file/directory metadata, "
-                        "'search' = search for files by name pattern"
+                        "'search' = search for files by name pattern, "
+                        "'send_file' = send a file to the user via messenger (supports any file type), "
+                        "'compress' = compress file(s) or directory into a zip and send to user"
                     ),
                 },
                 "path": {
                     "type": "string",
                     "description": "File or directory path",
                 },
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Multiple file/directory paths (for 'compress' action). "
+                                   "If provided, these are added to the zip archive.",
+                },
                 "pattern": {
                     "type": "string",
-                    "description": "Search pattern (glob, for 'search' action)",
+                    "description": "Search pattern (glob, for 'search' action). "
+                                   "For 'compress', filters files in a directory by glob pattern.",
                 },
                 "max_depth": {
                     "type": "integer",
@@ -72,6 +84,12 @@ class FileSystemTool(Tool):
                     pattern = kwargs.get("pattern", "*")
                     max_depth = kwargs.get("max_depth", 3)
                     return self._search(path, pattern, max_depth)
+                case "send_file":
+                    return self._send_file(path)
+                case "compress":
+                    paths = kwargs.get("paths")
+                    pattern = kwargs.get("pattern")
+                    return self._compress(path, extra_paths=paths, pattern=pattern)
                 case _:
                     return f"Error: unknown action '{action}'"
         except PermissionError:
@@ -127,6 +145,90 @@ class FileSystemTool(Tool):
             f"Permissions: {oct(stat.st_mode)}",
         ]
         return "\n".join(info_lines)
+
+    def _send_file(self, path: Path) -> str:
+        """Read a file and queue it as an attachment to be sent to the user."""
+        if not path.is_file():
+            return f"Error: '{path}' is not a file"
+
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+        size = path.stat().st_size
+        if size > MAX_FILE_SIZE:
+            return f"Error: file is too large ({_format_size(size)}). Max 50MB."
+
+        try:
+            data = path.read_bytes()
+        except PermissionError:
+            return f"Error: permission denied for '{path}'"
+
+        media_type = mimetypes.guess_type(str(path))[0] or "application/octet-stream"
+        filename = path.name
+
+        self.add_pending_image(data, media_type, filename)
+        return f"File '{filename}' ({_format_size(size)}) queued for sending to user."
+
+    def _compress(
+        self,
+        path: Path,
+        extra_paths: list[str] | None = None,
+        pattern: str | None = None,
+    ) -> str:
+        """Compress files/directories into a zip and queue for sending."""
+        MAX_ZIP_SIZE = 50 * 1024 * 1024  # 50MB
+
+        # Collect all target paths
+        targets: list[Path] = []
+        if extra_paths:
+            for p in extra_paths:
+                targets.append(Path(p).resolve())
+        else:
+            targets.append(path)
+
+        # Validate all targets exist
+        for t in targets:
+            if not t.exists():
+                return f"Error: '{t}' does not exist"
+
+        buf = io.BytesIO()
+        file_count = 0
+        try:
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                for target in targets:
+                    if target.is_file():
+                        zf.write(target, target.name)
+                        file_count += 1
+                    elif target.is_dir():
+                        for root, _dirs, files in os.walk(target):
+                            for f in files:
+                                fp = Path(root) / f
+                                if pattern and not fp.match(pattern):
+                                    continue
+                                arcname = fp.relative_to(target.parent)
+                                zf.write(fp, str(arcname))
+                                file_count += 1
+                    else:
+                        return f"Error: '{target}' is not a file or directory"
+        except PermissionError as e:
+            return f"Error: permission denied - {e}"
+
+        if file_count == 0:
+            return "Error: no files matched for compression."
+
+        zip_data = buf.getvalue()
+        if len(zip_data) > MAX_ZIP_SIZE:
+            return f"Error: resulting zip is too large ({_format_size(len(zip_data))}). Max 50MB."
+
+        # Determine zip filename
+        if len(targets) == 1:
+            zip_name = targets[0].stem + ".zip"
+        else:
+            zip_name = "archive.zip"
+
+        self.add_pending_image(zip_data, "application/zip", zip_name)
+        return (
+            f"Compressed {file_count} file(s) into '{zip_name}' "
+            f"({_format_size(len(zip_data))}). Queued for sending to user."
+        )
 
     @staticmethod
     def _search(path: Path, pattern: str, max_depth: int) -> str:
