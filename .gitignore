@@ -28,3 +28,4 @@ data/*.db-wal
 # OS
 .DS_Store
 Thumbs.db
+/data/mcp_servers.json
